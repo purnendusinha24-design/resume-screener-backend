@@ -1,0 +1,39 @@
+{
+  "name": "resume-screener-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Resume Screener application",
+  "main": "dist/index.js",
+  "scripts": {
+  "dev": "nodemon src/index.ts",
+  "build": "tsc",
+  "start": "node dist/index.js"
+},
+  "keywords": [
+    "resume",
+    "screening",
+    "backend",
+    "node",
+    "express",
+    "typescript"
+  ],
+  "author": "Purnendu",
+  "license": "MIT",
+  "dependencies": {
+    "@prisma/client": "^6.19.1",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.22.1",
+    "multer": "^2.0.2",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^20.11.30",
+    "@types/pdf-parse": "^1.1.5",
+    "nodemon": "^3.1.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

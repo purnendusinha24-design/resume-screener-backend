@@ -1,0 +1,28 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Batch {
+  id        String   @id @default(uuid())
+  role      String
+  createdAt DateTime @default(now())
+  resumes   Resume[]
+}
+
+model Resume {
+  id        String   @id @default(uuid())
+  batchId   String
+  filename  String
+  rawText   String
+  score     Int
+  verdict   String
+  reasons   String
+
+  batch     Batch    @relation(fields: [batchId], references: [id])
+  createdAt DateTime @default(now())
+}
