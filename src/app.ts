@@ -19,14 +19,28 @@ app.get("/", (_req, res) => {
 });
 
 // ---------- DASHBOARD STATS ----------
-app.get("/api/stats", async (_req, res) => {
-  res.json({
-    total: 42,
-    shortlisted: 18,
-    rejected: 16,
-    pending: 8,
+app.get("/api/stats", async (req, res) => {
+  const { batchId } = req.query;
+
+  if (!batchId || typeof batchId !== "string") {
+    return res.status(400).json({ error: "batchId required" });
+  }
+
+  const resumes = await prisma.resume.findMany({
+    where: { batchId },
+    select: { verdict: true },
   });
+
+  const stats = {
+    total: resumes.length,
+    shortlisted: resumes.filter(r => r.verdict === "HIRE").length,
+    rejected: resumes.filter(r => r.verdict === "REJECT").length,
+    pending: resumes.filter(r => r.verdict === "MAYBE").length,
+  };
+
+  res.json(stats);
 });
+
 
 // ---------- CREATE BATCH ----------
 app.post("/batch", async (req, res) => {
