@@ -7,22 +7,80 @@ datasource db {
   url      = "file:./dev.db"
 }
 
-model Batch {
+model Company {
   id        String   @id @default(uuid())
-  role      String
+  name      String
+  slug      String   @unique
+  plan      String   @default("free")
+  isActive  Boolean  @default(true)
+
   createdAt DateTime @default(now())
-  resumes   Resume[]
+  updatedAt DateTime?
+
+  users      User[]
+  batches    Batch[]
+  candidates Candidate[]
 }
 
-model Resume {
+model User {
   id        String   @id @default(uuid())
-  batchId   String
-  filename  String
-  rawText   String
-  score     Int
-  verdict   String
-  reasons   String
+  email     String
+  password  String
 
-  batch     Batch    @relation(fields: [batchId], references: [id])
+  companyId String
+  role      String   @default("admin")
+  isActive  Boolean  @default(true)
+
+  company   Company  @relation(fields: [companyId], references: [id])
+
   createdAt DateTime @default(now())
+  updatedAt DateTime?
+
+  @@unique([companyId, email])
+  @@index([companyId])
+}
+
+model Batch {
+  id        String   @id @default(uuid())
+  name      String?
+  status    String   @default("processing")
+
+  companyId String?
+  createdBy String?
+
+  company   Company?  @relation(fields: [companyId], references: [id])
+  candidates Candidate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime?
+
+  @@index([companyId])
+  @@index([companyId, status])
+}
+
+
+model Candidate {
+  id        String   @id @default(uuid())
+  name      String?
+  email     String?
+  resumeUrl String
+  rawText   String
+
+  score     Int?
+  decision  String?
+  explanation String?
+  keywordsMatched Json?
+
+  companyId String
+  batchId   String
+
+  company   Company  @relation(fields: [companyId], references: [id])
+  batch     Batch    @relation(fields: [batchId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime?
+
+  @@index([companyId])
+  @@index([batchId])
+  @@index([companyId, decision])
 }

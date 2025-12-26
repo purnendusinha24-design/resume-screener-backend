@@ -1,7 +1,10 @@
-import express from "express";
+import express, { Response } from "express";
 import cors from "cors";
 import multer from "multer";
 import { PrismaClient } from "@prisma/client";
+
+import { authMiddleware, AuthRequest } from "./middleware/auth";
+import { requireRole } from "./middleware/requireRole";
 import { extractTextFromPDF } from "./utils/pdfParser";
 import { scoreSalesFresherResume } from "./scoring/salesFresherScorer";
 
@@ -13,100 +16,199 @@ app.use(express.json());
 
 const upload = multer({ dest: "uploads/" });
 
-// ---------- HEALTH CHECK ----------
+/* =========================
+   HEALTH CHECKS
+========================= */
+
 app.get("/", (_req, res) => {
   res.send("Backend running");
 });
 
-// ---------- DASHBOARD STATS ----------
-app.get("/api/stats", async (req, res) => {
-  const { batchId } = req.query;
-
-  if (!batchId || typeof batchId !== "string") {
-    return res.status(400).json({ error: "batchId required" });
+app.get(
+  "/health/protected",
+  authMiddleware,
+  (req: AuthRequest, res: Response) => {
+    res.json({
+      message: "Protected route working",
+      userId: req.userId,
+      companyId: req.companyId,
+      role: req.role,
+    });
   }
+);
 
-  const resumes = await prisma.resume.findMany({
-    where: { batchId },
-    select: { verdict: true },
-  });
+/* =========================
+   BATCH ROUTES (RBAC)
+========================= */
 
-  const stats = {
-    total: resumes.length,
-    shortlisted: resumes.filter(r => r.verdict === "HIRE").length,
-    rejected: resumes.filter(r => r.verdict === "REJECT").length,
-    pending: resumes.filter(r => r.verdict === "MAYBE").length,
-  };
+// CREATE BATCH — ADMIN ONLY
+app.post(
+  "/batch",
+  authMiddleware,
+  requireRole(["admin"]),
+  async (req: AuthRequest, res: Response) => {
+    const { name } = req.body;
 
-  res.json(stats);
-});
+    if (!name) {
+      return res.status(400).json({ error: "Batch name is required" });
+    }
 
+    const batch = await prisma.batch.create({
+      data: {
+        name,
+        companyId: req.companyId!,
+        createdBy: req.userId!,
+      },
+    });
 
-// ---------- CREATE BATCH ----------
-app.post("/batch", async (req, res) => {
-  const { role } = req.body;
-  if (!role) return res.status(400).json({ error: "role is required" });
+    res.status(201).json(batch);
+  }
+);
 
-  const batch = await prisma.batch.create({ data: { role } });
-  res.json(batch);
-});
+// GET ALL BATCHES — ADMIN + RECRUITER
+app.get(
+  "/batch",
+  authMiddleware,
+  requireRole(["admin", "recruiter"]),
+  async (req: AuthRequest, res: Response) => {
+    const batches = await prisma.batch.findMany({
+      where: { companyId: req.companyId! },
+      orderBy: { createdAt: "desc" },
+    });
 
-// ---------- GET BATCH RESULTS ----------
-app.get("/batch/:batchId/results", async (req, res) => {
-  const { batchId } = req.params;
+    res.json(batches);
+  }
+);
 
-  try {
-    const resumes = await prisma.resume.findMany({
-      where: { batchId },
+// GET BATCH RESULTS — ADMIN + RECRUITER
+app.get(
+  "/batch/:batchId/results",
+  authMiddleware,
+  requireRole(["admin", "recruiter"]),
+  async (req: AuthRequest, res: Response) => {
+    const { batchId } = req.params;
+
+    const batch = await prisma.batch.findFirst({
+      where: {
+        id: batchId,
+        companyId: req.companyId!,
+      },
+    });
+
+    if (!batch) {
+      return res.status(404).json({ error: "Batch not found" });
+    }
+
+    const candidates = await prisma.candidate.findMany({
+      where: {
+        batchId,
+        companyId: req.companyId!,
+      },
       orderBy: { score: "desc" },
     });
 
-    res.json({
-      rankedResumes: resumes,
+    res.json({ rankedCandidates: candidates });
+  }
+);
+
+/* =========================
+   DASHBOARD STATS — ADMIN + RECRUITER
+========================= */
+
+app.get(
+  "/api/stats",
+  authMiddleware,
+  requireRole(["admin", "recruiter"]),
+  async (req: AuthRequest, res: Response) => {
+    const { batchId } = req.query;
+
+    if (!batchId || typeof batchId !== "string") {
+      return res.status(400).json({ error: "batchId required" });
+    }
+
+    const batch = await prisma.batch.findFirst({
+      where: {
+        id: batchId,
+        companyId: req.companyId!,
+      },
     });
-  } catch (error) {
-    console.error("Failed to fetch batch results:", error);
-    res.status(500).json({ error: "Failed to fetch batch results" });
+
+    if (!batch) {
+      return res.status(404).json({ error: "Batch not found" });
+    }
+
+    const candidates = await prisma.candidate.findMany({
+      where: {
+        batchId,
+        companyId: req.companyId!,
+      },
+      select: { decision: true },
+    });
+
+    const stats = {
+      total: candidates.length,
+      shortlisted: candidates.filter(c => c.decision === "hire").length,
+      rejected: candidates.filter(c => c.decision === "reject").length,
+      pending: candidates.filter(c => c.decision === "maybe").length,
+    };
+
+    res.json(stats);
   }
-});
+);
 
-// ---------- UPLOAD RESUME ----------
-app.post("/resume/upload", upload.single("resume"), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-const { batchId } = req.body;
+/* =========================
+   RESUME UPLOAD — ADMIN + RECRUITER
+========================= */
 
-if (!batchId) {
-  return res.status(400).json({ error: "batchId is required" });
-}
+app.post(
+  "/resume/upload",
+  authMiddleware,
+  requireRole(["admin", "recruiter"]),
+  upload.single("resume"),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
 
-const rawText = await extractTextFromPDF(req.file.path);
-const scoreResult = scoreSalesFresherResume(rawText);
+      const { batchId } = req.body;
 
-const resume = await prisma.resume.create({
-  data: {
-    filename: req.file.originalname,
-    rawText,
-    score: scoreResult.score,
-    verdict: scoreResult.verdict,
-    reasons: "", // placeholder for now
-    batchId,
-  },
-});
+      if (!batchId) {
+        return res.status(400).json({ error: "batchId is required" });
+      }
 
-res.json({ success: true, resume });
+      const batch = await prisma.batch.findFirst({
+        where: {
+          id: batchId,
+          companyId: req.companyId!,
+        },
+      });
 
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Upload failed" });
+      if (!batch) {
+        return res.status(404).json({ error: "Batch not found" });
+      }
+
+      const rawText = await extractTextFromPDF(req.file.path);
+      const scoreResult = scoreSalesFresherResume(rawText);
+
+      const candidate = await prisma.candidate.create({
+        data: {
+          resumeUrl: req.file.originalname,
+          rawText,
+          score: scoreResult.score,
+          decision: scoreResult.verdict.toLowerCase(),
+          explanation: "",
+          batchId,
+          companyId: req.companyId!,
+        },
+      });
+
+      res.json({ success: true, candidate });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Upload failed" });
+    }
   }
-});
-
-app.get("/batch", async (_req, res) => {
-  const batches = await prisma.batch.findMany({
-    orderBy: { createdAt: "desc" }
-  });
-  res.json(batches);
-});
+);
 
 export default app;
